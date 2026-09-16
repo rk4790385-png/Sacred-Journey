@@ -16,6 +16,7 @@ export interface PilgrimageCircuit {
   slug: string;
   subtitle: string;
   description: string;
+  coverImage: string;
   accent: "saffron" | "forest" | "sky" | "plum" | "gold";
   locations: CircuitLocation[];
 }
@@ -27,6 +28,7 @@ export const INITIAL_CIRCUITS: PilgrimageCircuit[] = [
     slug: "jyotirlingas",
     subtitle: "Sacred Manifestations of Lord Shiva across India",
     description: "The 12 Jyotirlinga shrines are considered the most revered abodes of Lord Shiva, radiating infinite divine light and spiritual power.",
+    coverImage: "https://images.unsplash.com/photo-1561361513-2d000a50f0dc?auto=format&fit=crop&w=700&q=80",
     accent: "saffron",
     locations: [
       {
@@ -145,6 +147,7 @@ export const INITIAL_CIRCUITS: PilgrimageCircuit[] = [
     slug: "panch-kedar",
     subtitle: "The Five Sacred Shiva Temples of Garhwal Himalayas",
     description: "The holy circuit established by the Pandavas in Uttarakhand, worshipping different body manifestations of Lord Shiva.",
+    coverImage: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?auto=format&fit=crop&w=700&q=80",
     accent: "forest",
     locations: [
       {
@@ -161,7 +164,7 @@ export const INITIAL_CIRCUITS: PilgrimageCircuit[] = [
         name: "Tungnath (Arms)",
         deity: "Lord Shiva",
         state: "Uttarakhand",
-        description: "The highest Shiva temple in the world at 3,680m (12,073 ft) altitude where Shiva's arms (Bahu) appeared.",
+        description: "The highest Shiva temple in the world at 3,680m altitude where Shiva's arms (Bahu) appeared.",
         imageUrl: "https://images.unsplash.com/photo-1605649487212-47bdab064df7?auto=format&fit=crop&w=600&q=80",
         visited: false,
       },
@@ -200,6 +203,7 @@ export const INITIAL_CIRCUITS: PilgrimageCircuit[] = [
     slug: "char-dham",
     subtitle: "The Four Cardinal Abodes of Spiritual Liberation",
     description: "The sacred pilgrimage circuit defined by Adi Shankaracharya marking the four cardinal corners of Bharat.",
+    coverImage: "https://images.unsplash.com/photo-1605649487212-47bdab064df7?auto=format&fit=crop&w=700&q=80",
     accent: "sky",
     locations: [
       {
@@ -246,6 +250,7 @@ export const INITIAL_CIRCUITS: PilgrimageCircuit[] = [
     slug: "panch-kailash",
     subtitle: "The Five Sacred Himalayan Abodes of Transcendence",
     description: "The five sacred mountain summits symbolizing the cosmic axis and supreme abode of Lord Shiva.",
+    coverImage: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&w=700&q=80",
     accent: "plum",
     locations: [
       {
@@ -301,6 +306,7 @@ export const INITIAL_CIRCUITS: PilgrimageCircuit[] = [
     slug: "tirumala",
     subtitle: "The Abode of Lord Sri Venkateswara",
     description: "The sacred Seven Hills of Tirumala in the Seshachalam range, dedicated to Lord Venkateswara (Balaji).",
+    coverImage: "https://images.unsplash.com/photo-1582510003544-4d00b7f74220?auto=format&fit=crop&w=700&q=80",
     accent: "gold",
     locations: [
       {

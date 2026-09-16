@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Compass,
   Flame,
-  Globe,
   Heart,
   ImagePlus,
   Info,
@@ -63,66 +62,31 @@ const DEFAULT_PHOTO: MemoryPhoto = {
   caption: "A quiet morning at Tirumala",
 };
 
-function ProgressRing({ value }: { value: number }) {
-  const radius = 48;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (value / 100) * circumference;
-
-  return (
-    <div className="ring-container">
-      <svg
-        className="ring-svg"
-        viewBox="0 0 120 120"
-        role="progressbar"
-        aria-valuenow={value}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`${value}% of pilgrimage journey completed`}
-      >
-        <circle
-          className="ring-track"
-          cx="60"
-          cy="60"
-          r={radius}
-          strokeWidth="9"
-        />
-        <circle
-          className="ring-value"
-          cx="60"
-          cy="60"
-          r={radius}
-          strokeWidth="9"
-          style={{
-            strokeDasharray: `${circumference}px`,
-            strokeDashoffset: `${strokeDashoffset}px`,
-          }}
-        />
-      </svg>
-      <div className="ring-label">
-        <strong>{value}%</strong>
-        <span>completed</span>
-      </div>
-    </div>
-  );
-}
-
 export function App() {
   const [journey, setJourney] = useState<Journey>(fallbackJourney);
   const [circuits, setCircuits] = useState<PilgrimageCircuit[]>(() => {
     try {
       const saved = localStorage.getItem("sacred-journey-circuits");
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Ensure coverImage exists from INITIAL_CIRCUITS
+        return INITIAL_CIRCUITS.map((init) => {
+          const matched = parsed.find((p: PilgrimageCircuit) => p.id === init.id);
+          return matched ? { ...init, locations: matched.locations } : init;
+        });
+      }
     } catch {
       /* fallback */
     }
     return INITIAL_CIRCUITS;
   });
+
   const [selectedCircuit, setSelectedCircuit] = useState<PilgrimageCircuit | null>(null);
   const [locationFilter, setLocationFilter] = useState<"all" | "visited" | "pending">("all");
   const [loading, setLoading] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [showPlan, setShowPlan] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
   const [photos, setPhotos] = useState<MemoryPhoto[]>(() => {
     try {
       return (
@@ -135,7 +99,7 @@ export function App() {
     }
   });
 
-  // Fetch from backend API if available
+  // Fetch backend journey data if running
   useEffect(() => {
     fetch(API_URL)
       .then((res) => (res.ok ? res.json() : Promise.reject()))
@@ -153,61 +117,73 @@ export function App() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Sync circuits to local storage
+  // Save circuits to localStorage
   useEffect(() => {
     localStorage.setItem("sacred-journey-circuits", JSON.stringify(circuits));
   }, [circuits]);
 
-  // Sync photos to local storage
+  // Save photos to localStorage
   useEffect(() => {
     localStorage.setItem("sacred-journey-photos", JSON.stringify(photos));
   }, [photos]);
 
-  // Dynamically compute completed counts from circuits
-  const circuitGoals = useMemo(() => {
+  // Dynamic calculations for circuits
+  const circuitStats = useMemo(() => {
     return circuits.map((c) => {
-      const completedCount = c.locations.filter((loc) => loc.visited).length;
+      const visited = c.locations.filter((loc) => loc.visited).length;
+      const total = c.locations.length;
+      const percentage = Math.round((visited / total) * 100);
       return {
         id: c.id,
         name: c.name,
-        completed: completedCount,
-        total: c.locations.length,
-        accent: c.accent,
         subtitle: c.subtitle,
+        description: c.description,
+        coverImage: c.coverImage,
+        accent: c.accent,
+        visited,
+        total,
+        percentage,
+        isComplete: visited === total,
+        locations: c.locations,
       };
     });
   }, [circuits]);
 
-  const totalCompleted = useMemo(
-    () => circuitGoals.reduce((sum, g) => sum + g.completed, 0),
-    [circuitGoals]
+  const totalVisited = useMemo(
+    () => circuitStats.reduce((sum, c) => sum + c.visited, 0),
+    [circuitStats]
   );
-  const totalLocations = useMemo(
-    () => circuitGoals.reduce((sum, g) => sum + g.total, 0),
-    [circuitGoals]
+  const totalShrines = useMemo(
+    () => circuitStats.reduce((sum, c) => sum + c.total, 0),
+    [circuitStats]
   );
-  const overallPercentage = Math.round((totalCompleted / (totalLocations || 1)) * 100);
+  const overallPercent = Math.round((totalVisited / (totalShrines || 1)) * 100);
 
   function toggleLocationVisited(circuitId: string, locationId: string) {
     setCircuits((prev) =>
-      prev.map((circuit) => {
-        if (circuit.id !== circuitId) return circuit;
-        const updatedLocations = circuit.locations.map((loc) => {
+      prev.map((c) => {
+        if (c.id !== circuitId) return c;
+        const updated = c.locations.map((loc) => {
           if (loc.id !== locationId) return loc;
           const nextVisited = !loc.visited;
           return {
             ...loc,
             visited: nextVisited,
             visitedDate: nextVisited
-              ? loc.visitedDate || new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+              ? loc.visitedDate ||
+                new Date().toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })
               : undefined,
           };
         });
-        return { ...circuit, locations: updatedLocations };
+        return { ...c, locations: updated };
       })
     );
 
-    // Keep active modal in sync
+    // Keep active modal updated in real-time
     setSelectedCircuit((curr) => {
       if (!curr || curr.id !== circuitId) return curr;
       return {
@@ -219,7 +195,12 @@ export function App() {
             ...loc,
             visited: nextVisited,
             visitedDate: nextVisited
-              ? loc.visitedDate || new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+              ? loc.visitedDate ||
+                new Date().toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })
               : undefined,
           };
         }),
@@ -227,15 +208,15 @@ export function App() {
     });
   }
 
-  function addPhotos(event: ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(event.target.files || []);
-    selected.forEach((file) => {
+  function handlePhotoUpload(e: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    files.forEach((file) => {
       const reader = new FileReader();
       reader.onload = () => {
         setPhotos((current) => [
           ...current,
           {
-            id: `${file.name}-${Date.now()}-${Math.random()}`,
+            id: `photo-${Date.now()}-${Math.random()}`,
             name: file.name.replace(/\.[^/.]+$/, ""),
             url: String(reader.result),
             caption: "Sacred pilgrimage memory",
@@ -244,21 +225,21 @@ export function App() {
       };
       reader.readAsDataURL(file);
     });
-    event.target.value = "";
+    e.target.value = "";
   }
 
   function removePhoto(id: string) {
     setPhotos((curr) => curr.filter((p) => p.id !== id));
   }
 
-  async function savePlan(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
+  async function handleSavePlan(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
     const nextPlan = String(form.get("nextPlan") || "Srisailam");
     const nextPlanNote = String(form.get("note") || "Next destination to plan");
     setJourney((prev) => ({ ...prev, nextPlan, nextPlanNote }));
-    setSaved(true);
-    setShowPlan(false);
+    setSavedSuccess(true);
+    setShowPlanModal(false);
     try {
       await fetch(`${API_URL}/plan`, {
         method: "POST",
@@ -271,576 +252,501 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
-      {/* Sidebar Navigation */}
-      <aside className={`sidebar ${menuOpen ? "is-open" : ""}`}>
-        <div className="brand">
-          <div className="brand-mark">
-            <Sparkles size={18} />
-          </div>
-          <span>
-            Sacred<span>Journey</span>
-          </span>
-        </div>
-
-        <div className="profile-chip">
-          <div className="avatar">R</div>
-          <div className="profile-info">
-            <strong>{journey.name}</strong>
-            <small>Devotee &amp; Pilgrim</small>
-          </div>
-        </div>
-
-        <nav aria-label="Main Navigation">
-          <p className="nav-label">Navigation</p>
-          <a
-            className="nav-item active"
-            href="#overview"
-            onClick={() => setMenuOpen(false)}
-          >
-            <Compass size={17} /> Overview
+    <div className="site-wrapper">
+      {/* ========================================================
+          1. TOP NAVIGATION BAR (Clean, Modern, Accessible)
+         ======================================================== */}
+      <header className="site-header">
+        <div className="header-inner">
+          <a href="#overview" className="header-brand">
+            <div className="brand-icon">
+              <Sparkles size={18} />
+            </div>
+            <div className="brand-text">
+              <span>Sacred</span>
+              <span className="brand-accent">Journey</span>
+            </div>
           </a>
-          <a
-            className="nav-item"
-            href="#my-journey"
-            onClick={() => setMenuOpen(false)}
-          >
-            <Target size={17} /> My Progress
-            <span className="nav-count">{overallPercentage}%</span>
-          </a>
-          <a
-            className="nav-item"
-            href="#circuits"
-            onClick={() => setMenuOpen(false)}
-          >
-            <Milestone size={17} /> Pilgrimage Circuits
-            <span className="nav-count">{circuits.length}</span>
-          </a>
-          <a
-            className="nav-item"
-            href="#next-plan"
-            onClick={() => setMenuOpen(false)}
-          >
-            <CalendarDays size={17} /> Up Next
-          </a>
-          <a
-            className="nav-item"
-            href="#memories"
-            onClick={() => setMenuOpen(false)}
-          >
-            <Camera size={17} /> Memories
-            <span className="nav-count">{photos.length}</span>
-          </a>
-          <a
-            className="nav-item"
-            href="#story"
-            onClick={() => setMenuOpen(false)}
-          >
-            <Route size={17} /> Pilgrimage Story
-          </a>
-        </nav>
 
-        <div className="sidebar-quote">
-          <Heart size={15} fill="currentColor" />
-          <p>“The journey itself is the prayer.”</p>
-        </div>
+          <nav className="header-nav" aria-label="Main Navigation">
+            <a href="#overview" className="nav-link active">
+              <Compass size={15} /> Home
+            </a>
+            <a href="#progress" className="nav-link">
+              <Target size={15} /> My Journey
+            </a>
+            <a href="#circuits" className="nav-link">
+              <Milestone size={15} /> Pilgrimages
+            </a>
+            <a href="#memories" className="nav-link">
+              <Camera size={15} /> Memories
+            </a>
+          </nav>
 
-        <div className="sidebar-footer">
-          Sacred Journey <span>v1.0</span>
-        </div>
-      </aside>
-
-      {menuOpen && (
-        <button
-          className="mobile-scrim"
-          onClick={() => setMenuOpen(false)}
-          aria-label="Close navigation menu"
-        />
-      )}
-
-      {/* Main Content Area */}
-      <main className="main-content">
-        <header className="topbar">
-          <button
-            className="icon-button menu-button"
-            onClick={() => setMenuOpen(true)}
-            aria-label="Open menu"
-          >
-            <Menu size={22} />
-          </button>
-          <div className="eyebrow">DIGITAL PILGRIMAGE COMPANION</div>
-          <div className="topbar-right">
-            <span className="live-dot" />
-            <span>Active Journey</span>
-            <div className="avatar small">R</div>
-          </div>
-        </header>
-
-        <div className="content-wrap">
-          {/* 1. Hero Section */}
-          <section className="hero" id="overview">
-            <div className="hero-copy">
-              <div className="kicker">
-                <Flame size={14} /> Sacred Path of Devotion
-              </div>
-              <h1>
-                Keep walking,<br />
-                <em>{journey.name}.</em>
-              </h1>
-              <p>
-                Plan, track, and preserve your sacred pilgrimages across India. One
-                shrine completed, a lifelong path of divine discovery ahead.
-              </p>
-              <div className="hero-actions">
-                <a href="#circuits" className="primary-button hero-cta">
-                  Explore My Journey <ArrowRight size={16} />
-                </a>
-                <div className="hero-meta">
-                  <span>
-                    <Check size={14} /> {journey.place} Visited
-                  </span>
-                  <span>
-                    <CalendarDays size={14} /> {journey.completedAt}
-                  </span>
-                </div>
+          <div className="header-actions">
+            <div className="user-profile-pill">
+              <div className="avatar-circle">R</div>
+              <div className="user-info">
+                <strong>{journey.name}</strong>
+                <small>1 Visited</small>
               </div>
             </div>
 
-            <div className="hero-art" aria-hidden="true">
-              <div className="sun" />
-              <div className="temple-silhouette">ॐ</div>
-              <div className="mountain mountain-one" />
-              <div className="mountain mountain-two" />
-              <div className="art-caption">
-                Tirumala
-                <br />
-                <span>6 July 2026</span>
+            <button
+              className="mobile-menu-toggle"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="Toggle navigation menu"
+            >
+              {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Slide-down Drawer */}
+        {mobileMenuOpen && (
+          <div className="mobile-nav-menu">
+            <a
+              href="#overview"
+              className="mobile-nav-link"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <Compass size={16} /> Home
+            </a>
+            <a
+              href="#progress"
+              className="mobile-nav-link"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <Target size={16} /> My Journey (Progress)
+            </a>
+            <a
+              href="#circuits"
+              className="mobile-nav-link"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <Milestone size={16} /> Pilgrimage Circuits
+            </a>
+            <a
+              href="#memories"
+              className="mobile-nav-link"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <Camera size={16} /> Memories &amp; Notes
+            </a>
+          </div>
+        )}
+      </header>
+
+      {/* Main Content Container */}
+      <main className="site-main">
+        {/* ========================================================
+            2. HERO SECTION (Clean, Compact, Inspiring, NOT Bloated)
+           ======================================================== */}
+        <section className="hero-banner" id="overview">
+          <div className="hero-container">
+            <div className="hero-badge">
+              <Flame size={13} />
+              <span>Spiritual Pilgrimage Tracker</span>
+            </div>
+
+            <h1 className="hero-title">
+              Sacred Journey
+            </h1>
+
+            <p className="hero-desc">
+              Track your spiritual pilgrimages across India&apos;s sacred circuits, preserve
+              memorable moments, and walk your path of divine devotion.
+            </p>
+
+            <div className="hero-button-row">
+              <a href="#progress" className="btn-primary">
+                Explore My Journey <ArrowRight size={16} />
+              </a>
+              <button
+                className="btn-outline"
+                onClick={() => {
+                  setSavedSuccess(false);
+                  setShowPlanModal(true);
+                }}
+              >
+                Plan Next Shrine <ArrowUpRight size={15} />
+              </button>
+            </div>
+
+            <div className="hero-quick-meta">
+              <div className="meta-pill">
+                <Check size={13} />
+                <span>
+                  <strong>{journey.place}</strong> visited ({journey.completedAt})
+                </span>
+              </div>
+              <div className="meta-pill">
+                <MapPin size={13} />
+                <span>
+                  Next: <strong>{journey.nextPlan}</strong>
+                </span>
               </div>
             </div>
-          </section>
-
-          {/* Devotional Strip */}
-          <div className="devotional-strip">
-            <span className="strip-line" />
-            <span className="strip-mantra">श्री वेंकटेश्वराय नमः</span>
-            <span className="strip-line" />
-            <span className="strip-caption">A prayer for every mile</span>
           </div>
+        </section>
 
-          {/* 2. My Pilgrimage Progress Overview */}
-          <section className="section-block" id="my-journey">
-            <div className="section-heading">
+        <div className="content-container">
+          {savedSuccess && (
+            <div className="alert-banner" role="status">
+              <Check size={16} />
+              <span>Your upcoming destination plan has been saved successfully.</span>
+            </div>
+          )}
+
+          {/* ========================================================
+              3. MY JOURNEY / PROGRESS (Prominent, High-Priority)
+             ======================================================== */}
+          <section className="section-container" id="progress">
+            <div className="section-title-bar">
               <div>
-                <span className="section-kicker">PROGRESS OVERVIEW</span>
-                <h2>My Pilgrimage Journey</h2>
+                <span className="section-tag">OVERVIEW</span>
+                <h2>My Pilgrimage Progress</h2>
               </div>
-              <span className="goal-total">
-                {totalCompleted} of {totalLocations} Sacred Places Visited
-              </span>
+              <div className="section-stat-badge">
+                <strong>{totalVisited}</strong> of <strong>{totalShrines}</strong> Shrines Visited
+              </div>
             </div>
 
-            <div className="progress-card-grid">
-              <div className="progress-summary-card">
-                <ProgressRing value={overallPercentage} />
-                <div className="progress-summary-text">
-                  <h3>Overall Completion</h3>
-                  <p>
-                    {totalCompleted === 0
-                      ? "Choose a pilgrimage circuit to begin your sacred path."
-                      : `${totalCompleted} temple${totalCompleted > 1 ? "s" : ""} visited across ${
-                          circuitGoals.filter((g) => g.completed > 0).length
-                        } circuit${circuitGoals.filter((g) => g.completed > 0).length > 1 ? "s" : ""}.`}
-                  </p>
-                  <div className="stat-pills">
-                    <span className="stat-pill completed">
-                      <strong>{totalCompleted}</strong> Visited
-                    </span>
-                    <span className="stat-pill remaining">
-                      <strong>{totalLocations - totalCompleted}</strong> Remaining
-                    </span>
+            {/* Overall Progress Dashboard Strip */}
+            <div className="progress-overview-strip">
+              <div className="overall-ring-col">
+                <div className="ring-wrap">
+                  <svg viewBox="0 0 100 100" className="ring-svg">
+                    <circle cx="50" cy="50" r="42" className="ring-bg" />
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      className="ring-bar"
+                      style={{
+                        strokeDasharray: 263.89,
+                        strokeDashoffset:
+                          263.89 - (overallPercent / 100) * 263.89,
+                      }}
+                    />
+                  </svg>
+                  <div className="ring-text">
+                    <span className="ring-number">{overallPercent}%</span>
+                    <span className="ring-sub">Done</span>
                   </div>
                 </div>
               </div>
 
-              <div className="circuit-quick-list">
-                {circuitGoals.map((goal) => {
-                  const percent = Math.round((goal.completed / goal.total) * 100);
-                  const isDone = goal.completed === goal.total;
-                  return (
-                    <div className="circuit-quick-item" key={goal.id}>
-                      <div className="circuit-quick-header">
-                        <div className="circuit-quick-title">
-                          <span className={`goal-dot ${goal.accent}`} />
-                          <strong>{goal.name}</strong>
-                        </div>
-                        <div className="circuit-quick-status">
-                          <span>
-                            {goal.completed} / {goal.total}
-                          </span>
-                          {isDone ? (
-                            <span className="badge badge-done">Completed</span>
-                          ) : goal.completed > 0 ? (
-                            <span className="badge badge-progress">{percent}%</span>
-                          ) : (
-                            <span className="badge badge-pending">Not Started</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="bar">
-                        <i
-                          className={goal.accent}
-                          style={{ width: `${percent}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="overall-metrics-col">
+                <div className="metric-box">
+                  <span className="metric-label">Completed Shrines</span>
+                  <span className="metric-val completed">{totalVisited}</span>
+                </div>
+                <div className="metric-box">
+                  <span className="metric-label">Remaining Shrines</span>
+                  <span className="metric-val remaining">
+                    {totalShrines - totalVisited}
+                  </span>
+                </div>
+                <div className="metric-box">
+                  <span className="metric-label">Active Circuits</span>
+                  <span className="metric-val active">
+                    {circuitStats.filter((c) => c.visited > 0).length} of 5
+                  </span>
+                </div>
+                <div className="metric-box">
+                  <span className="metric-label">Next Destination</span>
+                  <span className="metric-val next">{journey.nextPlan}</span>
+                </div>
               </div>
+            </div>
+
+            {/* Compact Circuit Progress Cards Grid */}
+            <div className="progress-cards-grid">
+              {circuitStats.map((c) => (
+                <div
+                  className="circuit-progress-card"
+                  key={c.id}
+                  onClick={() => {
+                    const match = circuits.find((item) => item.id === c.id);
+                    if (match) setSelectedCircuit(match);
+                    setLocationFilter("all");
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="c-progress-header">
+                    <div className="c-title-wrap">
+                      <span className={`dot-indicator ${c.accent}`} />
+                      <h4>{c.name}</h4>
+                    </div>
+                    {c.isComplete ? (
+                      <span className="status-tag complete">
+                        <Check size={11} /> Completed
+                      </span>
+                    ) : c.visited > 0 ? (
+                      <span className="status-tag in-progress">
+                        {c.visited}/{c.total} Visited
+                      </span>
+                    ) : (
+                      <span className="status-tag not-started">
+                        0/{c.total}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="c-bar-wrap">
+                    <div className="mini-bar">
+                      <div
+                        className={`mini-bar-fill ${c.accent}`}
+                        style={{ width: `${c.percentage}%` }}
+                      />
+                    </div>
+                    <span className="c-percent-text">{c.percentage}%</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
 
-          {/* 3. Pilgrimage Circuits Grid */}
-          <section className="section-block" id="circuits">
-            <div className="section-heading">
+          {/* ========================================================
+              4. PILGRIMAGE CIRCUITS (Visual Grid with Images & Actions)
+             ======================================================== */}
+          <section className="section-container" id="circuits">
+            <div className="section-title-bar">
               <div>
-                <span className="section-kicker">SACRED CIRCUITS</span>
+                <span className="section-tag">EXPLORE</span>
                 <h2>Pilgrimage Circuits</h2>
               </div>
-              <span className="goal-total">
-                5 Major Circuits Available
-              </span>
+              <p className="section-subtitle">
+                Explore the five divine pilgrimage routes across Bharat and track your steps.
+              </p>
             </div>
 
-            <div className="circuits-grid">
-              {circuits.map((circuit) => {
-                const visitedCount = circuit.locations.filter((l) => l.visited).length;
-                const totalCount = circuit.locations.length;
-                const percent = Math.round((visitedCount / totalCount) * 100);
-                const isComplete = visitedCount === totalCount;
-
-                return (
-                  <article
-                    className="circuit-card"
-                    key={circuit.id}
-                    onClick={() => {
-                      setSelectedCircuit(circuit);
-                      setLocationFilter("all");
-                    }}
-                  >
-                    <div className="circuit-card-header">
-                      <div className="circuit-badge-wrap">
-                        <span className={`goal-dot ${circuit.accent}`} />
-                        <span className="circuit-badge-text">
-                          {totalCount} Sacred Shrines
-                        </span>
-                      </div>
-                      {isComplete ? (
-                        <span className="status-chip complete">
-                          <Check size={12} /> Completed
-                        </span>
-                      ) : visitedCount > 0 ? (
-                        <span className="status-chip in-progress">
-                          {visitedCount}/{totalCount} Visited
-                        </span>
-                      ) : (
-                        <span className="status-chip not-started">
-                          0/{totalCount} Visited
+            <div className="circuits-visual-grid">
+              {circuitStats.map((c) => (
+                <article className="circuit-visual-card" key={c.id}>
+                  <div className="circuit-img-wrap">
+                    <img
+                      src={c.coverImage}
+                      alt={c.name}
+                      loading="lazy"
+                    />
+                    <div className="circuit-img-overlay">
+                      <span className="circuit-places-count">
+                        {c.total} Sacred Places
+                      </span>
+                      {c.isComplete && (
+                        <span className="circuit-badge-done">
+                          <Check size={12} /> Visited
                         </span>
                       )}
                     </div>
+                  </div>
 
-                    <h3 className="circuit-name">{circuit.name}</h3>
-                    <p className="circuit-subtitle">{circuit.subtitle}</p>
+                  <div className="circuit-card-body">
+                    <div className="circuit-card-title-row">
+                      <h3>{c.name}</h3>
+                      <span className="circuit-count-pill">
+                        {c.visited} / {c.total}
+                      </span>
+                    </div>
 
-                    <div className="circuit-progress-wrap">
-                      <div className="circuit-progress-info">
-                        <span>Progress</span>
-                        <strong>{percent}%</strong>
-                      </div>
-                      <div className="bar">
-                        <i
-                          className={circuit.accent}
-                          style={{ width: `${percent}%` }}
+                    <p className="circuit-card-desc">{c.subtitle}</p>
+
+                    <div className="circuit-card-progress">
+                      <div className="bar-track">
+                        <div
+                          className={`bar-fill ${c.accent}`}
+                          style={{ width: `${c.percentage}%` }}
                         />
                       </div>
+                      <span className="progress-num">{c.percentage}%</span>
                     </div>
 
-                    <div className="circuit-card-footer">
-                      <span className="circuit-remaining">
-                        {totalCount - visitedCount === 0
-                          ? "Circuit Complete"
-                          : `${totalCount - visitedCount} destinations remaining`}
-                      </span>
-                      <button
-                        className="explore-link"
-                        aria-label={`View details for ${circuit.name}`}
-                      >
-                        Explore Circuit <ChevronRight size={15} />
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
+                    <button
+                      className="btn-explore-circuit"
+                      onClick={() => {
+                        const match = circuits.find((item) => item.id === c.id);
+                        if (match) setSelectedCircuit(match);
+                        setLocationFilter("all");
+                      }}
+                    >
+                      Explore Shrines <ChevronRight size={15} />
+                    </button>
+                  </div>
+                </article>
+              ))}
             </div>
           </section>
 
-          {/* 4. Up Next / Plan Ahead Destination */}
-          <section className="next-card" id="next-plan">
-            <div className="next-icon">
-              <MapPin size={22} />
-            </div>
-            <div className="next-copy">
-              <span className="section-kicker">UP NEXT DESTINATION</span>
-              <h2>{journey.nextPlan}</h2>
-              <p>{journey.nextPlanNote}</p>
-            </div>
-            <button
-              className="primary-button"
-              onClick={() => {
-                setSaved(false);
-                setShowPlan(true);
-              }}
-            >
-              Plan this visit <ArrowUpRight size={16} />
-            </button>
-          </section>
-
-          {saved && (
-            <div className="save-note" role="status">
-              <Check size={16} /> Your next destination plan has been saved
-              successfully.
-            </div>
-          )}
-
-          {/* 5. Sacred Memories / Photo Journal */}
-          <section className="memories-section" id="memories">
-            <div className="section-heading">
+          {/* ========================================================
+              5. RECENT JOURNEY & MEMORIES (Compact & Content-Driven)
+             ======================================================== */}
+          <section className="section-container" id="memories">
+            <div className="section-title-bar">
               <div>
-                <span className="section-kicker">SACRED MEMORIES</span>
-                <h2>Pilgrimage Journal &amp; Photos</h2>
+                <span className="section-tag">SACRED ARCHIVES</span>
+                <h2>Recent Journey &amp; Memories</h2>
               </div>
-              <label className="upload-button">
-                <ImagePlus size={16} /> Add Photos
+              <label className="btn-upload-photos">
+                <ImagePlus size={15} /> Add Memories
                 <input
                   type="file"
                   accept="image/*"
                   multiple
-                  onChange={addPhotos}
+                  onChange={handlePhotoUpload}
                 />
               </label>
             </div>
 
-            <div className="memories-layout">
-              <div className="photo-gallery-wrap">
-                {photos.length === 0 ? (
-                  <div className="empty-memories">
-                    <Camera size={32} />
-                    <h4>No memories uploaded yet</h4>
-                    <p>
-                      Upload photographs of your pilgrimages to keep sacred
-                      moments close to your heart.
-                    </p>
-                    <label className="primary-button compact-btn">
-                      <Plus size={15} /> Upload First Photo
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={addPhotos}
-                      />
-                    </label>
-                  </div>
-                ) : (
-                  <div className="photo-grid-compact">
-                    {photos.map((photo) => (
-                      <figure className="photo-item" key={photo.id}>
-                        <img
-                          src={photo.url}
-                          alt={photo.caption || photo.name}
-                          loading="lazy"
-                        />
-                        <button
-                          className="photo-delete-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removePhoto(photo.id);
-                          }}
-                          aria-label={`Remove photo ${photo.name}`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                        <figcaption>
-                          <span>{photo.caption}</span>
-                          <small>{photo.name}</small>
-                        </figcaption>
-                      </figure>
-                    ))}
-                    <label className="photo-add-card">
-                      <Camera size={20} />
-                      <strong>Add Memory</strong>
-                      <span>Upload photos</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={addPhotos}
-                      />
-                    </label>
-                  </div>
-                )}
-              </div>
-
-              {/* Visited Place Highlight */}
-              <article className="place-spotlight-card">
-                <div className="spotlight-header">
-                  <div className="detail-icon">
-                    <BookOpen size={18} />
-                  </div>
-                  <div>
-                    <span className="section-kicker">FIRST VISITED SHRINE</span>
-                    <h3>{journey.place}</h3>
-                  </div>
+            <div className="memories-compact-grid">
+              {/* Completed Journey Milestone Card */}
+              <div className="milestone-highlight-card">
+                <div className="milestone-badge">
+                  <Check size={13} />
+                  <span>First Completed Pilgrimage</span>
                 </div>
-
-                <div className="detail-date">
-                  <CalendarDays size={14} /> Completed on {journey.completedAt}
+                <h3>{journey.place}</h3>
+                <div className="milestone-date">
+                  <CalendarDays size={13} /> Completed on {journey.completedAt}
                 </div>
-
-                <p className="spotlight-text">
-                  Tirumala marked the serene beginning of Raj&apos;s sacred journey.
-                  The holy seven hills and the darshan established the spiritual
-                  foundation for the pilgrimages to come.
+                <p className="milestone-desc">
+                  Tirumala established the foundation of Raj&apos;s sacred journey. The
+                  seven holy hills, the divine darshan of Lord Sri Venkateswara,
+                  and the spiritual blessings opened the path ahead.
                 </p>
-
-                <div className="detail-divider" />
-                <span className="detail-label">PERSONAL REFLECTION</span>
-                <p className="personal-note">
+                <div className="milestone-note">
                   “A peaceful beginning. The path is open and filled with grace.”
+                </div>
+              </div>
+
+              {/* Next Planned Destination Card */}
+              <div className="next-dest-highlight-card">
+                <div className="next-badge">
+                  <MapPin size={13} />
+                  <span>Next Destination</span>
+                </div>
+                <h3>{journey.nextPlan}</h3>
+                <p className="next-desc">
+                  {journey.nextPlanNote ||
+                    "Prepare your itinerary, route, and spiritual intention for this sacred shrine."}
                 </p>
-              </article>
-            </div>
-          </section>
-
-          {/* 6. Story & Timeline (100% Spiritual, No Career Clutter) */}
-          <section className="timeline-section" id="story">
-            <div className="section-heading">
-              <div>
-                <span className="section-kicker">PILGRIMAGE TIMELINE</span>
-                <h2>Your Spiritual Journey So Far</h2>
+                <button
+                  className="btn-edit-plan"
+                  onClick={() => {
+                    setSavedSuccess(false);
+                    setShowPlanModal(true);
+                  }}
+                >
+                  Edit Next Plan <ArrowUpRight size={14} />
+                </button>
               </div>
             </div>
 
-            <div className="timeline-compact">
-              <div className="timeline-spine" />
-
-              {/* Milestone 1: Tirumala */}
-              <div className="timeline-card done">
-                <div className="timeline-marker done">
-                  <Check size={14} />
-                </div>
-                <div className="timeline-content">
-                  <div className="timeline-header-row">
-                    <span className="timeline-date">6 JULY 2026</span>
-                    <span className="completed-tag">Completed</span>
-                  </div>
-                  <h3>Tirumala (Tirupati)</h3>
-                  <p>
-                    The first recorded holy pilgrimage. Dedicated to Lord Sri
-                    Venkateswara, laying the foundation toward completing the 12
-                    Jyotirlingas, Panch Kedar, Char Dham, and Panch Kailash.
-                  </p>
-                </div>
+            {/* Photo Memories Gallery Strip */}
+            <div className="photo-memories-strip">
+              <div className="photo-memories-header">
+                <h4>Photo Memories ({photos.length})</h4>
+                <label className="link-add-photo">
+                  <Plus size={14} /> Upload Photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handlePhotoUpload}
+                  />
+                </label>
               </div>
 
-              {/* Milestone 2: Next Planned Stop */}
-              <div className="timeline-card upcoming">
-                <div className="timeline-marker upcoming">
-                  <MapPin size={14} />
-                </div>
-                <div className="timeline-content">
-                  <div className="timeline-header-row">
-                    <span className="timeline-date">NEXT DESTINATION</span>
-                    <span className="upcoming-tag">In Planning</span>
+              <div className="photo-cards-row">
+                {photos.map((photo) => (
+                  <div className="photo-card-compact" key={photo.id}>
+                    <img src={photo.url} alt={photo.caption} loading="lazy" />
+                    <button
+                      className="photo-remove-btn"
+                      onClick={() => removePhoto(photo.id)}
+                      aria-label="Remove photo"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                    <div className="photo-caption-bar">
+                      <span>{photo.caption}</span>
+                    </div>
                   </div>
-                  <h3>{journey.nextPlan}</h3>
-                  <p>
-                    {journey.nextPlanNote ||
-                      "Plan the dates, route, and accommodations for your next sacred visit."}
-                  </p>
-                  <button
-                    className="text-button"
-                    onClick={() => setShowPlan(true)}
-                  >
-                    Edit destination details <Plus size={14} />
-                  </button>
-                </div>
+                ))}
               </div>
             </div>
           </section>
-
-          {/* Footer */}
-          <footer>
-            <span>Made with devotion for the road ahead, {journey.name}.</span>
-            <span>
-              12 Jyotirlingas <b>·</b> Panch Kedar <b>·</b> Char Dham <b>·</b> Panch
-              Kailash <b>·</b> Tirumala
-            </span>
-          </footer>
         </div>
       </main>
 
-      {/* Plan Destination Modal */}
-      {showPlan && (
-        <div className="modal-backdrop" onClick={() => setShowPlan(false)}>
+      {/* Footer */}
+      <footer className="site-footer">
+        <div className="footer-inner">
+          <div className="footer-brand">
+            <Sparkles size={16} />
+            <span>Sacred Journey</span>
+            <small>Personal Pilgrimage Companion</small>
+          </div>
+          <div className="footer-circuits">
+            12 Jyotirlingas • Panch Kedar • Char Dham • Panch Kailash • Tirumala
+          </div>
+          <div className="footer-copy">
+            Dedicated to the road ahead, {journey.name}.
+          </div>
+        </div>
+      </footer>
+
+      {/* ========================================================
+          MODAL: Plan Next Destination
+         ======================================================== */}
+      {showPlanModal && (
+        <div className="modal-overlay" onClick={() => setShowPlanModal(false)}>
           <div
-            className="modal-box"
+            className="modal-card"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="plan-modal-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              type="button"
-              className="close-button"
-              onClick={() => setShowPlan(false)}
-              aria-label="Close modal"
-            >
-              <X size={18} />
-            </button>
-            <span className="section-kicker">NEXT SACRED DESTINATION</span>
-            <h2 id="plan-modal-title">Plan Your Next Visit</h2>
-            <p>
-              Set your upcoming pilgrimage destination and add any travel notes or
-              preparations.
-            </p>
-            <form onSubmit={savePlan}>
-              <label>
-                Destination Name
+            <div className="modal-card-header">
+              <h3>Plan Next Pilgrimage</h3>
+              <button
+                className="btn-modal-close"
+                onClick={() => setShowPlanModal(false)}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleSavePlan}>
+              <div className="form-group">
+                <label>Destination Name</label>
                 <input
                   name="nextPlan"
                   defaultValue={journey.nextPlan}
                   required
                   placeholder="e.g. Srisailam, Kedarnath, Somnath"
                 />
-              </label>
-              <label>
-                Notes &amp; Travel Plan
+              </div>
+              <div className="form-group">
+                <label>Notes &amp; Travel Itinerary</label>
                 <input
                   name="note"
                   defaultValue={journey.nextPlanNote}
-                  placeholder="e.g. Planning a weekend trip via Hyderabad"
+                  placeholder="e.g. Planning a weekend darshan via Hyderabad"
                 />
-              </label>
-              <div className="modal-actions">
+              </div>
+              <div className="modal-button-row">
                 <button
                   type="button"
-                  className="secondary-button"
-                  onClick={() => setShowPlan(false)}
+                  className="btn-secondary"
+                  onClick={() => setShowPlanModal(false)}
                 >
                   Cancel
                 </button>
-                <button className="primary-button" type="submit">
-                  Save Next Plan <Check size={16} />
+                <button type="submit" className="btn-primary">
+                  Save Plan <Check size={15} />
                 </button>
               </div>
             </form>
@@ -848,52 +754,48 @@ export function App() {
         </div>
       )}
 
-      {/* Circuit Detail Explorer Modal */}
+      {/* ========================================================
+          MODAL: Pilgrimage Circuit Explorer & Location Checklist
+         ======================================================== */}
       {selectedCircuit && (
         <div
-          className="modal-backdrop"
+          className="modal-overlay"
           onClick={() => setSelectedCircuit(null)}
         >
           <div
-            className="circuit-modal"
+            className="circuit-explorer-modal"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="circuit-detail-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="circuit-modal-header">
+            <div className="explorer-header">
               <div>
-                <div className="circuit-modal-badge">
-                  <span className={`goal-dot ${selectedCircuit.accent}`} />
-                  <span className="section-kicker">CIRCUIT EXPLORER</span>
+                <div className="explorer-badge">
+                  <span className={`dot-indicator ${selectedCircuit.accent}`} />
+                  <span>PILGRIMAGE CIRCUIT EXPLORER</span>
                 </div>
-                <h2 id="circuit-detail-title">{selectedCircuit.name}</h2>
-                <p className="circuit-modal-desc">
-                  {selectedCircuit.description}
-                </p>
+                <h2>{selectedCircuit.name}</h2>
+                <p className="explorer-desc">{selectedCircuit.description}</p>
               </div>
               <button
-                type="button"
-                className="close-button"
+                className="btn-modal-close"
                 onClick={() => setSelectedCircuit(null)}
-                aria-label="Close circuit details"
+                aria-label="Close"
               >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Circuit Progress Bar inside modal */}
-            <div className="modal-progress-strip">
-              <div className="modal-progress-label">
+            {/* Progress summary inside modal */}
+            <div className="explorer-progress-strip">
+              <div className="exp-progress-label">
                 <span>
                   <strong>
-                    {
-                      selectedCircuit.locations.filter((l) => l.visited).length
-                    }
+                    {selectedCircuit.locations.filter((l) => l.visited).length}
                   </strong>{" "}
-                  of <strong>{selectedCircuit.locations.length}</strong> visited
+                  of <strong>{selectedCircuit.locations.length}</strong> shrines visited
                 </span>
-                <span className="modal-percent">
+                <span className="exp-percent">
                   {Math.round(
                     (selectedCircuit.locations.filter((l) => l.visited).length /
                       selectedCircuit.locations.length) *
@@ -902,9 +804,9 @@ export function App() {
                   % Complete
                 </span>
               </div>
-              <div className="bar">
-                <i
-                  className={selectedCircuit.accent}
+              <div className="mini-bar large">
+                <div
+                  className={`mini-bar-fill ${selectedCircuit.accent}`}
                   style={{
                     width: `${
                       (selectedCircuit.locations.filter((l) => l.visited).length /
@@ -916,33 +818,30 @@ export function App() {
               </div>
             </div>
 
-            {/* Filter Pills */}
-            <div className="modal-filter-row">
-              <span className="filter-label">Filter:</span>
+            {/* Filter Tabs */}
+            <div className="explorer-filters">
               <button
-                className={`filter-pill ${locationFilter === "all" ? "active" : ""}`}
+                className={`filter-btn ${locationFilter === "all" ? "active" : ""}`}
                 onClick={() => setLocationFilter("all")}
               >
                 All ({selectedCircuit.locations.length})
               </button>
               <button
-                className={`filter-pill ${locationFilter === "visited" ? "active" : ""}`}
+                className={`filter-btn ${locationFilter === "visited" ? "active" : ""}`}
                 onClick={() => setLocationFilter("visited")}
               >
-                Visited (
-                {selectedCircuit.locations.filter((l) => l.visited).length})
+                Visited ({selectedCircuit.locations.filter((l) => l.visited).length})
               </button>
               <button
-                className={`filter-pill ${locationFilter === "pending" ? "active" : ""}`}
+                className={`filter-btn ${locationFilter === "pending" ? "active" : ""}`}
                 onClick={() => setLocationFilter("pending")}
               >
-                To Visit (
-                {selectedCircuit.locations.filter((l) => !l.visited).length})
+                Remaining ({selectedCircuit.locations.filter((l) => !l.visited).length})
               </button>
             </div>
 
             {/* Locations List */}
-            <div className="circuit-locations-list">
+            <div className="explorer-locations-grid">
               {selectedCircuit.locations
                 .filter((loc) => {
                   if (locationFilter === "visited") return loc.visited;
@@ -951,54 +850,49 @@ export function App() {
                 })
                 .map((loc, idx) => (
                   <div
-                    className={`location-card ${loc.visited ? "is-visited" : ""}`}
+                    className={`location-item-card ${
+                      loc.visited ? "visited" : ""
+                    }`}
                     key={loc.id}
                   >
-                    <div className="location-img-wrap">
+                    <div className="loc-thumb-wrap">
                       <img
                         src={loc.imageUrl}
                         alt={loc.name}
                         loading="lazy"
                         onError={(e) => {
-                          // Fallback placeholder image if Unsplash link breaks
                           (e.target as HTMLImageElement).src =
                             "https://images.unsplash.com/photo-1582510003544-4d00b7f74220?auto=format&fit=crop&w=400&q=80";
                         }}
                       />
-                      <span className="location-index">#{idx + 1}</span>
+                      <span className="loc-index">#{idx + 1}</span>
                     </div>
 
-                    <div className="location-content">
-                      <div className="location-title-row">
+                    <div className="loc-info">
+                      <div className="loc-header-row">
                         <h4>{loc.name}</h4>
-                        <span className="location-state">
-                          <MapPin size={12} /> {loc.state}
+                        <span className="loc-state">
+                          <MapPin size={11} /> {loc.state}
                         </span>
                       </div>
 
                       {loc.deity && (
-                        <p className="location-deity">
+                        <span className="loc-deity">
                           <strong>Deity:</strong> {loc.deity}
-                        </p>
+                        </span>
                       )}
 
-                      <p className="location-desc">{loc.description}</p>
+                      <p className="loc-description">{loc.description}</p>
 
                       {loc.visited && loc.visitedDate && (
-                        <div className="location-visited-date">
-                          <Check size={13} /> Visited on {loc.visitedDate}
-                        </div>
-                      )}
-
-                      {loc.notes && (
-                        <div className="location-note-preview">
-                          <Info size={12} /> {loc.notes}
+                        <div className="loc-visited-tag">
+                          <Check size={12} /> Visited on {loc.visitedDate}
                         </div>
                       )}
 
                       <button
-                        className={`toggle-visit-btn ${
-                          loc.visited ? "marked-done" : "mark-pending"
+                        className={`btn-toggle-visited ${
+                          loc.visited ? "is-visited" : "not-visited"
                         }`}
                         onClick={() =>
                           toggleLocationVisited(selectedCircuit.id, loc.id)
@@ -1006,11 +900,11 @@ export function App() {
                       >
                         {loc.visited ? (
                           <>
-                            <Check size={14} /> Visited
+                            <Check size={13} /> Visited
                           </>
                         ) : (
                           <>
-                            <Plus size={14} /> Mark as Visited
+                            <Plus size={13} /> Mark as Visited
                           </>
                         )}
                       </button>
@@ -1019,9 +913,9 @@ export function App() {
                 ))}
             </div>
 
-            <div className="circuit-modal-footer">
+            <div className="explorer-footer">
               <button
-                className="secondary-button"
+                className="btn-secondary"
                 onClick={() => setSelectedCircuit(null)}
               >
                 Close Explorer
@@ -1031,7 +925,7 @@ export function App() {
         </div>
       )}
 
-      {loading && <div className="loading-bar" />}
+      {loading && <div className="site-loading-bar" />}
     </div>
   );
 }
