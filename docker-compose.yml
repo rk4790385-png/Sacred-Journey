@@ -1,0 +1,9 @@
+services:
+  app:
+    build:
+      context: .
+    environment:
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

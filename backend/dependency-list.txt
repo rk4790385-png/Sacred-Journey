@@ -1,0 +1,7 @@
+The following files have been resolved:
+   org.springframework.boot:spring-boot-starter-data-jpa:jar:4.1.0:compile -- module spring.boot.starter.data.jpa [auto]
+   org.springframework.boot:spring-boot-starter-security:jar:4.1.0:compile -- module spring.boot.starter.security [auto]
+   org.springframework.boot:spring-boot-starter-validation:jar:4.1.0:compile -- module spring.boot.starter.validation [auto]
+   org.springframework.boot:spring-boot-starter-web:jar:4.1.0:compile -- module spring.boot.starter.web [auto]
+   org.projectlombok:lombok:jar:1.18.46:compile (optional) -- module lombok
+
