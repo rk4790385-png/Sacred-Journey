@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: sacred-journey-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/journey/health
+    disk:
+      name: sacred-journey-data
+      mountPath: /app/data
+      sizeGB: 1

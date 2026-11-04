@@ -47,6 +47,10 @@
 
   Photos are stored by the API in its database, so every device using the same API sees the same albums. The default H2 database is file-backed, and Docker Compose mounts a persistent volume at `/app/data`; photos remain available after app/container restarts. Keep the `sacred-journey-data` volume when updating the container.
 
+  ### Render backend
+
+  The root `render.yaml` defines the Docker API service and its persistent disk. In Render, create a new Blueprint from this repository and review the service and disk costs before confirming; the persistent disk requires a paid service plan. After deployment, copy the service URL into the Vercel `VITE_API_URL` environment variable and redeploy the frontend.
+
   ## Vercel deployment
 
   Vercel deploys only the Vite frontend and does not provide persistent storage for the API. Deploy the Spring Boot API separately to Render, Railway, Azure Container Apps, or another host, and configure that API to use a persistent database. For example, set `DB_URL`, `DB_DRIVER`, `DB_USERNAME`, and `DB_PASSWORD` on the API host for a managed MySQL instance. Do not rely on the default file-backed H2 database on hosts with ephemeral filesystems.
