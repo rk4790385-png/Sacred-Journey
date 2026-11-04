@@ -45,11 +45,13 @@
   ..\apache-maven-3.9.16\bin\mvn.cmd spring-boot:run
   ```
 
-  The local H2 database is intentionally used for this first deployable slice. Replace the datasource environment with managed MySQL settings before using persistent production data.
+  Photos are stored by the API in its database, so every device using the same API sees the same albums. The default H2 database is file-backed, and Docker Compose mounts a persistent volume at `/app/data`; photos remain available after app/container restarts. Keep the `sacred-journey-data` volume when updating the container.
 
   ## Vercel deployment
 
-  Vercel deploys the Vite frontend. Deploy the Spring Boot API separately to Render, Railway, Azure Container Apps, or any Docker host, then set this Vercel environment variable:
+  Vercel deploys only the Vite frontend and does not provide persistent storage for the API. Deploy the Spring Boot API separately to Render, Railway, Azure Container Apps, or another host, and configure that API to use a persistent database. For example, set `DB_URL`, `DB_DRIVER`, `DB_USERNAME`, and `DB_PASSWORD` on the API host for a managed MySQL instance. Do not rely on the default file-backed H2 database on hosts with ephemeral filesystems.
+
+  Set this Vercel environment variable to the deployed API's base URL:
 
   ```text
   VITE_API_URL=https://your-sacred-journey-api.example.com
@@ -62,5 +64,5 @@
   npx vercel --prod
   ```
 
-  In the Vercel project settings, use `VITE_API_URL` for Production, Preview, and Development as needed. The frontend build is `npm run build`, and the output directory is `dist`.
+  In the Vercel project settings, use `VITE_API_URL` for Production, Preview, and Development as needed. The frontend build is `npm run build`, and the output directory is `dist`. Existing photos saved only in a browser's local storage are uploaded to the API the first time that browser opens the updated app; keep that browser's saved data until migration completes.
   

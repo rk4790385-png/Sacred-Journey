@@ -6,4 +6,9 @@ services:
       JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC"
     ports:
       - "8080:8080"
+    volumes:
+      - sacred-journey-data:/app/data
     restart: unless-stopped
+
+volumes:
+  sacred-journey-data:

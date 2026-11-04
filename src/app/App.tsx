@@ -37,6 +37,13 @@ type Journey = {
   goals: Goal[];
 };
 type PlaceMemory = { id: string; url: string; caption: string };
+type StoredMemory = {
+  id: string;
+  circuitId: string;
+  locationId: string;
+  caption: string;
+  imageUrl: string;
+};
 
 const normalizeCircuits = (items: PilgrimageCircuit[]): PilgrimageCircuit[] =>
   items.map((circuit) => ({
@@ -46,6 +53,27 @@ const normalizeCircuits = (items: PilgrimageCircuit[]): PilgrimageCircuit[] =>
       memories: (location.memories || []).filter((memory) =>
         memory.id.startsWith("user-upload-")
       ),
+    })),
+  }));
+
+const mergeStoredMemories = (
+  items: PilgrimageCircuit[],
+  memories: StoredMemory[]
+): PilgrimageCircuit[] =>
+  items.map((circuit) => ({
+    ...circuit,
+    locations: circuit.locations.map((location) => ({
+      ...location,
+      memories: memories
+        .filter(
+          (memory) =>
+            memory.circuitId === circuit.id && memory.locationId === location.id
+        )
+        .map((memory) => ({
+          id: memory.id,
+          caption: memory.caption,
+          url: `${API_BASE}${memory.imageUrl}`,
+        })),
     })),
   }));
 
@@ -64,7 +92,9 @@ const fallbackJourney: Journey = {
   ],
 };
 
-const API_URL = `${import.meta.env.VITE_API_URL || ""}/api/journey`;
+const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const API_URL = `${API_BASE}/api/journey`;
+const MEMORIES_API_URL = `${API_BASE}/api/memories`;
 type AppPage = "home" | "track" | "places" | "memories";
 
 const resolvePage = (hash: string): AppPage => {
@@ -94,6 +124,7 @@ export function App() {
   const [selectedCircuit, setSelectedCircuit] = useState<PilgrimageCircuit | null>(null);
   const [locationFilter, setLocationFilter] = useState<"all" | "visited" | "pending">("all");
   const [loading, setLoading] = useState(true);
+  const [photoError, setPhotoError] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -109,6 +140,88 @@ export function App() {
     };
     window.addEventListener("hashchange", syncPage);
     return () => window.removeEventListener("hashchange", syncPage);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchStoredMemories(): Promise<StoredMemory[]> {
+      const response = await fetch(MEMORIES_API_URL);
+      if (!response.ok) {
+        throw new Error("Unable to load saved photos.");
+      }
+      return response.json();
+    }
+
+    async function syncMemories() {
+      try {
+        let memories = await fetchStoredMemories();
+        const savedIds = new Set(memories.map((memory) => memory.id));
+        const legacyMemories = circuits.flatMap((circuit) =>
+          circuit.locations.flatMap((location) =>
+            (location.memories || [])
+              .filter(
+                (memory) =>
+                  memory.id.startsWith("user-upload-") &&
+                  memory.url.startsWith("data:image/") &&
+                  !savedIds.has(memory.id)
+              )
+              .map((memory) => ({
+                ...memory,
+                circuitId: circuit.id,
+                locationId: location.id,
+              }))
+          )
+        );
+
+        for (const memory of legacyMemories) {
+          const image = await fetch(memory.url).then((response) =>
+            response.blob()
+          );
+          const form = new FormData();
+          form.set("id", memory.id);
+          form.set("circuitId", memory.circuitId);
+          form.set("locationId", memory.locationId);
+          form.set("caption", memory.caption);
+          form.set("file", image, `${memory.caption || "photo"}.jpg`);
+          const response = await fetch(MEMORIES_API_URL, {
+            method: "POST",
+            body: form,
+          });
+          if (!response.ok) {
+            throw new Error("Unable to migrate photos saved on this device.");
+          }
+          savedIds.add(memory.id);
+        }
+
+        if (legacyMemories.length) {
+          memories = await fetchStoredMemories();
+        }
+        if (!cancelled) {
+          setCircuits((current) => mergeStoredMemories(current, memories));
+          setSelectedCircuit((current) =>
+            current
+              ? {
+                  ...current,
+                  locations: mergeStoredMemories([current], memories)[0].locations,
+                }
+              : current
+          );
+          setPhotoError("");
+        }
+      } catch {
+        if (!cancelled) {
+          setPhotoError(
+            "Photos could not be synchronized. Check the connection to the photo service and try again."
+          );
+        }
+      }
+    }
+
+    void syncMemories();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fetch backend journey data if running
@@ -234,21 +347,44 @@ export function App() {
     });
   }
 
-  function handleLocationPhotoUpload(
+  async function handleLocationPhotoUpload(
     e: ChangeEvent<HTMLInputElement>,
     circuitId: string,
     locationId: string
   ) {
-    const files = Array.from(e.target.files || []).filter((file) =>
-      file.type.startsWith("image/")
+    const files = Array.from(e.target.files || []).filter(
+      (file) =>
+        file.type.startsWith("image/") && file.type !== "image/svg+xml"
     );
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
+    try {
+      for (const file of files) {
+        const form = new FormData();
+        form.set(
+          "id",
+          `user-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        );
+        form.set("circuitId", circuitId);
+        form.set("locationId", locationId);
+        form.set("caption", file.name.replace(/\.[^/.]+$/, ""));
+        form.set("file", file);
+
+        const response = await fetch(MEMORIES_API_URL, {
+          method: "POST",
+          body: form,
+        });
+        if (!response.ok) {
+          throw new Error(
+            response.status === 413
+              ? "This photo is too large to upload (maximum 20 MB)."
+              : "The photo could not be saved. Please try again."
+          );
+        }
+
+        const saved: StoredMemory = await response.json();
         const memory = {
-          id: `user-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          url: String(reader.result),
-          caption: file.name.replace(/\.[^/.]+$/, ""),
+          id: saved.id,
+          url: `${API_BASE}${saved.imageUrl}`,
+          caption: saved.caption,
         };
         const addMemory = (circuit: PilgrimageCircuit) =>
           circuit.id !== circuitId
@@ -256,11 +392,16 @@ export function App() {
             : {
                 ...circuit,
                 locations: circuit.locations.map((location) =>
-                  location.id !== locationId || !location.visited
+                  location.id !== locationId
                     ? location
                     : {
                         ...location,
-                        memories: [...(location.memories || []), memory],
+                        memories: [
+                          ...(location.memories || []).filter(
+                            (existing) => existing.id !== memory.id
+                          ),
+                          memory,
+                        ],
                       }
                 ),
               };
@@ -268,37 +409,61 @@ export function App() {
         setSelectedCircuit((current) =>
           current ? addMemory(current) : current
         );
-      };
-      reader.readAsDataURL(file);
-    });
-    e.target.value = "";
+      }
+      setPhotoError("");
+    } catch (error) {
+      setPhotoError(
+        error instanceof Error
+          ? error.message
+          : "The photo could not be saved. Please try again."
+      );
+    } finally {
+      e.target.value = "";
+    }
   }
 
-  function removeLocationPhoto(
+  async function removeLocationPhoto(
     circuitId: string,
     locationId: string,
     memoryId: string
   ) {
-    const removeMemory = (circuit: PilgrimageCircuit) =>
-      circuit.id !== circuitId
-        ? circuit
-        : {
-            ...circuit,
-            locations: circuit.locations.map((location) =>
-              location.id !== locationId
-                ? location
-                : {
-                    ...location,
-                    memories: (location.memories || []).filter(
-                      (memory) => memory.id !== memoryId
-                    ),
-                  }
-            ),
-          };
-    setCircuits((current) => current.map(removeMemory));
-    setSelectedCircuit((current) =>
-      current ? removeMemory(current) : current
-    );
+    try {
+      const response = await fetch(
+        `${MEMORIES_API_URL}/${encodeURIComponent(memoryId)}`,
+        { method: "DELETE" }
+      );
+      if (!response.ok) {
+        throw new Error("The photo could not be deleted. Please try again.");
+      }
+
+      const removeMemory = (circuit: PilgrimageCircuit) =>
+        circuit.id !== circuitId
+          ? circuit
+          : {
+              ...circuit,
+              locations: circuit.locations.map((location) =>
+                location.id !== locationId
+                  ? location
+                  : {
+                      ...location,
+                      memories: (location.memories || []).filter(
+                        (memory) => memory.id !== memoryId
+                      ),
+                    }
+              ),
+            };
+      setCircuits((current) => current.map(removeMemory));
+      setSelectedCircuit((current) =>
+        current ? removeMemory(current) : current
+      );
+      setPhotoError("");
+    } catch (error) {
+      setPhotoError(
+        error instanceof Error
+          ? error.message
+          : "The photo could not be deleted. Please try again."
+      );
+    }
   }
 
   async function handleSavePlan(e: FormEvent<HTMLFormElement>) {
@@ -476,6 +641,12 @@ export function App() {
         </section>}
 
         <div className="content-container">
+          {photoError && (
+            <div className="alert-banner" role="alert">
+              <Info size={16} />
+              <span>{photoError}</span>
+            </div>
+          )}
           {savedSuccess && (
             <div className="alert-banner" role="status">
               <Check size={16} />
