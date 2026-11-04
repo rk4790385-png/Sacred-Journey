@@ -1,3 +1,9 @@
+export interface CircuitMemory {
+  id: string;
+  url: string;
+  caption: string;
+}
+
 export interface CircuitLocation {
   id: string;
   name: string;
@@ -8,6 +14,7 @@ export interface CircuitLocation {
   visited: boolean;
   visitedDate?: string;
   notes?: string;
+  memories?: CircuitMemory[];
 }
 
 export interface PilgrimageCircuit {

@@ -23,7 +23,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  CircuitLocation,
   INITIAL_CIRCUITS,
   PilgrimageCircuit,
 } from "./data/pilgrimageCircuits";
@@ -37,7 +36,18 @@ type Journey = {
   nextPlanNote: string;
   goals: Goal[];
 };
-type MemoryPhoto = { id: string; name: string; url: string; caption: string };
+type PlaceMemory = { id: string; url: string; caption: string };
+
+const normalizeCircuits = (items: PilgrimageCircuit[]): PilgrimageCircuit[] =>
+  items.map((circuit) => ({
+    ...circuit,
+    locations: circuit.locations.map((location) => ({
+      ...location,
+      memories: (location.memories || []).filter((memory) =>
+        memory.id.startsWith("user-upload-")
+      ),
+    })),
+  }));
 
 const fallbackJourney: Journey = {
   name: "Raj",
@@ -55,11 +65,13 @@ const fallbackJourney: Journey = {
 };
 
 const API_URL = `${import.meta.env.VITE_API_URL || ""}/api/journey`;
-const DEFAULT_PHOTO: MemoryPhoto = {
-  id: "tirumala-memory",
-  name: "Tirumala sunrise",
-  url: "https://images.unsplash.com/photo-1582510003544-4d00b7f74220?auto=format&fit=crop&w=900&q=82",
-  caption: "A quiet morning at Tirumala",
+type AppPage = "home" | "track" | "places" | "memories";
+
+const resolvePage = (hash: string): AppPage => {
+  if (hash === "#track" || hash === "#progress") return "track";
+  if (hash === "#places" || hash === "#circuits") return "places";
+  if (hash === "#memories") return "memories";
+  return "home";
 };
 
 export function App() {
@@ -69,16 +81,14 @@ export function App() {
       const saved = localStorage.getItem("sacred-journey-circuits");
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Ensure coverImage exists from INITIAL_CIRCUITS
-        return INITIAL_CIRCUITS.map((init) => {
-          const matched = parsed.find((p: PilgrimageCircuit) => p.id === init.id);
-          return matched ? { ...init, locations: matched.locations } : init;
-        });
+        if (Array.isArray(parsed) && parsed.length) {
+          return normalizeCircuits(parsed);
+        }
       }
     } catch {
       /* fallback */
     }
-    return INITIAL_CIRCUITS;
+    return normalizeCircuits(INITIAL_CIRCUITS);
   });
 
   const [selectedCircuit, setSelectedCircuit] = useState<PilgrimageCircuit | null>(null);
@@ -87,17 +97,19 @@ export function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [photos, setPhotos] = useState<MemoryPhoto[]>(() => {
-    try {
-      return (
-        JSON.parse(localStorage.getItem("sacred-journey-photos") || "null") || [
-          DEFAULT_PHOTO,
-        ]
-      );
-    } catch {
-      return [DEFAULT_PHOTO];
-    }
-  });
+  const [currentPage, setCurrentPage] = useState<AppPage>(() =>
+    resolvePage(window.location.hash)
+  );
+
+  useEffect(() => {
+    const syncPage = () => {
+      setCurrentPage(resolvePage(window.location.hash));
+      setMobileMenuOpen(false);
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener("hashchange", syncPage);
+    return () => window.removeEventListener("hashchange", syncPage);
+  }, []);
 
   // Fetch backend journey data if running
   useEffect(() => {
@@ -121,11 +133,6 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("sacred-journey-circuits", JSON.stringify(circuits));
   }, [circuits]);
-
-  // Save photos to localStorage
-  useEffect(() => {
-    localStorage.setItem("sacred-journey-photos", JSON.stringify(photos));
-  }, [photos]);
 
   // Dynamic calculations for circuits
   const circuitStats = useMemo(() => {
@@ -158,6 +165,25 @@ export function App() {
     [circuitStats]
   );
   const overallPercent = Math.round((totalVisited / (totalShrines || 1)) * 100);
+  const visitedAlbums = useMemo(
+    () =>
+      circuits.flatMap((circuit) =>
+        circuit.locations
+          .filter((location) => location.visited)
+          .map((location) => ({
+            circuitId: circuit.id,
+            circuitName: circuit.name,
+            locationId: location.id,
+            placeName: location.name,
+            memories: location.memories || [],
+          }))
+      ),
+    [circuits]
+  );
+  const totalMemoryCount = visitedAlbums.reduce(
+    (count, album) => count + album.memories.length,
+    0
+  );
 
   function toggleLocationVisited(circuitId: string, locationId: string) {
     setCircuits((prev) =>
@@ -208,28 +234,71 @@ export function App() {
     });
   }
 
-  function handlePhotoUpload(e: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || []);
+  function handleLocationPhotoUpload(
+    e: ChangeEvent<HTMLInputElement>,
+    circuitId: string,
+    locationId: string
+  ) {
+    const files = Array.from(e.target.files || []).filter((file) =>
+      file.type.startsWith("image/")
+    );
     files.forEach((file) => {
       const reader = new FileReader();
       reader.onload = () => {
-        setPhotos((current) => [
-          ...current,
-          {
-            id: `photo-${Date.now()}-${Math.random()}`,
-            name: file.name.replace(/\.[^/.]+$/, ""),
-            url: String(reader.result),
-            caption: "Sacred pilgrimage memory",
-          },
-        ]);
+        const memory = {
+          id: `user-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          url: String(reader.result),
+          caption: file.name.replace(/\.[^/.]+$/, ""),
+        };
+        const addMemory = (circuit: PilgrimageCircuit) =>
+          circuit.id !== circuitId
+            ? circuit
+            : {
+                ...circuit,
+                locations: circuit.locations.map((location) =>
+                  location.id !== locationId || !location.visited
+                    ? location
+                    : {
+                        ...location,
+                        memories: [...(location.memories || []), memory],
+                      }
+                ),
+              };
+        setCircuits((current) => current.map(addMemory));
+        setSelectedCircuit((current) =>
+          current ? addMemory(current) : current
+        );
       };
       reader.readAsDataURL(file);
     });
     e.target.value = "";
   }
 
-  function removePhoto(id: string) {
-    setPhotos((curr) => curr.filter((p) => p.id !== id));
+  function removeLocationPhoto(
+    circuitId: string,
+    locationId: string,
+    memoryId: string
+  ) {
+    const removeMemory = (circuit: PilgrimageCircuit) =>
+      circuit.id !== circuitId
+        ? circuit
+        : {
+            ...circuit,
+            locations: circuit.locations.map((location) =>
+              location.id !== locationId
+                ? location
+                : {
+                    ...location,
+                    memories: (location.memories || []).filter(
+                      (memory) => memory.id !== memoryId
+                    ),
+                  }
+            ),
+          };
+    setCircuits((current) => current.map(removeMemory));
+    setSelectedCircuit((current) =>
+      current ? removeMemory(current) : current
+    );
   }
 
   async function handleSavePlan(e: FormEvent<HTMLFormElement>) {
@@ -258,7 +327,7 @@ export function App() {
          ======================================================== */}
       <header className="site-header">
         <div className="header-inner">
-          <a href="#overview" className="header-brand">
+          <a href="#home" className="header-brand">
             <div className="brand-icon">
               <Sparkles size={18} />
             </div>
@@ -269,16 +338,32 @@ export function App() {
           </a>
 
           <nav className="header-nav" aria-label="Main Navigation">
-            <a href="#overview" className="nav-link active">
+            <a
+              href="#home"
+              className={`nav-link ${currentPage === "home" ? "active" : ""}`}
+              aria-current={currentPage === "home" ? "page" : undefined}
+            >
               <Compass size={15} /> Home
             </a>
-            <a href="#progress" className="nav-link">
-              <Target size={15} /> My Journey
+            <a
+              href="#track"
+              className={`nav-link ${currentPage === "track" ? "active" : ""}`}
+              aria-current={currentPage === "track" ? "page" : undefined}
+            >
+              <Target size={15} /> Track
             </a>
-            <a href="#circuits" className="nav-link">
-              <Milestone size={15} /> Pilgrimages
+            <a
+              href="#places"
+              className={`nav-link ${currentPage === "places" ? "active" : ""}`}
+              aria-current={currentPage === "places" ? "page" : undefined}
+            >
+              <Milestone size={15} /> Places
             </a>
-            <a href="#memories" className="nav-link">
+            <a
+              href="#memories"
+              className={`nav-link ${currentPage === "memories" ? "active" : ""}`}
+              aria-current={currentPage === "memories" ? "page" : undefined}
+            >
               <Camera size={15} /> Memories
             </a>
           </nav>
@@ -306,25 +391,25 @@ export function App() {
         {mobileMenuOpen && (
           <div className="mobile-nav-menu">
             <a
-              href="#overview"
+              href="#home"
               className="mobile-nav-link"
               onClick={() => setMobileMenuOpen(false)}
             >
               <Compass size={16} /> Home
             </a>
             <a
-              href="#progress"
+              href="#track"
               className="mobile-nav-link"
               onClick={() => setMobileMenuOpen(false)}
             >
-              <Target size={16} /> My Journey (Progress)
+              <Target size={16} /> Track
             </a>
             <a
-              href="#circuits"
+              href="#places"
               className="mobile-nav-link"
               onClick={() => setMobileMenuOpen(false)}
             >
-              <Milestone size={16} /> Pilgrimage Circuits
+              <Milestone size={16} /> Places
             </a>
             <a
               href="#memories"
@@ -338,11 +423,11 @@ export function App() {
       </header>
 
       {/* Main Content Container */}
-      <main className="site-main">
+      <main className={`site-main page-${currentPage}`}>
         {/* ========================================================
             2. HERO SECTION (Clean, Compact, Inspiring, NOT Bloated)
            ======================================================== */}
-        <section className="hero-banner" id="overview">
+        {currentPage === "home" && <section className="hero-banner" id="overview">
           <div className="hero-container">
             <div className="hero-badge">
               <Flame size={13} />
@@ -359,7 +444,7 @@ export function App() {
             </p>
 
             <div className="hero-button-row">
-              <a href="#progress" className="btn-primary">
+              <a href="#track" className="btn-primary">
                 Explore My Journey <ArrowRight size={16} />
               </a>
               <button
@@ -388,7 +473,7 @@ export function App() {
               </div>
             </div>
           </div>
-        </section>
+        </section>}
 
         <div className="content-container">
           {savedSuccess && (
@@ -398,10 +483,64 @@ export function App() {
             </div>
           )}
 
+          {currentPage === "home" && (
+            <section className="home-dashboard" aria-label="Journey at a glance">
+              <div className="home-dashboard-heading">
+                <span className="section-tag">YOUR JOURNEY</span>
+                <h2>At a glance</h2>
+              </div>
+              <div className="home-dashboard-grid">
+                <a className="home-stat-card" href="#track">
+                  <span className="home-stat-label">
+                    <Target size={16} /> Journey progress
+                  </span>
+                  <strong className="home-stat-value">{overallPercent}%</strong>
+                  <span className="home-stat-detail">
+                    {totalVisited} of {totalShrines} shrines visited
+                  </span>
+                  <span className="home-progress-track">
+                    <span style={{ width: `${overallPercent}%` }} />
+                  </span>
+                  <span className="home-card-link">
+                    Open tracker <ArrowRight size={13} />
+                  </span>
+                </a>
+
+                <a className="home-stat-card" href="#places">
+                  <span className="home-stat-label">
+                    <MapPin size={16} /> Next destination
+                  </span>
+                  <strong className="home-stat-destination">
+                    {journey.nextPlan}
+                  </strong>
+                  <span className="home-stat-detail">
+                    {journey.nextPlanNote || "Your next planned shrine"}
+                  </span>
+                  <span className="home-card-link">
+                    Explore places <ArrowRight size={13} />
+                  </span>
+                </a>
+
+                <a className="home-stat-card" href="#memories">
+                  <span className="home-stat-label">
+                    <Camera size={16} /> Saved memories
+                  </span>
+                  <strong className="home-stat-value">{totalMemoryCount}</strong>
+                  <span className="home-stat-detail">
+                    photos from {visitedAlbums.length} visited {visitedAlbums.length === 1 ? "place" : "places"}
+                  </span>
+                  <span className="home-card-link">
+                    View albums <ArrowRight size={13} />
+                  </span>
+                </a>
+              </div>
+            </section>
+          )}
+
           {/* ========================================================
               3. MY JOURNEY / PROGRESS (Prominent, High-Priority)
              ======================================================== */}
-          <section className="section-container" id="progress">
+          {currentPage === "track" && <section className="section-container" id="progress">
             <div className="section-title-bar">
               <div>
                 <span className="section-tag">OVERVIEW</span>
@@ -507,12 +646,12 @@ export function App() {
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
 
           {/* ========================================================
               4. PILGRIMAGE CIRCUITS (Visual Grid with Images & Actions)
              ======================================================== */}
-          <section className="section-container" id="circuits">
+          {currentPage === "places" && <section className="section-container" id="circuits">
             <div className="section-title-bar">
               <div>
                 <span className="section-tag">EXPLORE</span>
@@ -578,26 +717,17 @@ export function App() {
                 </article>
               ))}
             </div>
-          </section>
+          </section>}
 
           {/* ========================================================
               5. RECENT JOURNEY & MEMORIES (Compact & Content-Driven)
              ======================================================== */}
-          <section className="section-container" id="memories">
+          {currentPage === "memories" && <section className="section-container" id="memories">
             <div className="section-title-bar">
               <div>
                 <span className="section-tag">SACRED ARCHIVES</span>
                 <h2>Recent Journey &amp; Memories</h2>
               </div>
-              <label className="btn-upload-photos">
-                <ImagePlus size={15} /> Add Memories
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handlePhotoUpload}
-                />
-              </label>
             </div>
 
             <div className="memories-compact-grid">
@@ -644,40 +774,79 @@ export function App() {
               </div>
             </div>
 
-            {/* Photo Memories Gallery Strip */}
-            <div className="photo-memories-strip">
-              <div className="photo-memories-header">
-                <h4>Photo Memories ({photos.length})</h4>
-                <label className="link-add-photo">
-                  <Plus size={14} /> Upload Photo
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={handlePhotoUpload}
-                  />
-                </label>
-              </div>
-
-              <div className="photo-cards-row">
-                {photos.map((photo) => (
-                  <div className="photo-card-compact" key={photo.id}>
-                    <img src={photo.url} alt={photo.caption} loading="lazy" />
-                    <button
-                      className="photo-remove-btn"
-                      onClick={() => removePhoto(photo.id)}
-                      aria-label="Remove photo"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                    <div className="photo-caption-bar">
-                      <span>{photo.caption}</span>
+            <div className="place-albums">
+              {visitedAlbums.length ? (
+                visitedAlbums.map((album) => (
+                  <section
+                    className="place-album"
+                    key={`${album.circuitId}-${album.locationId}`}
+                  >
+                    <div className="place-album-header">
+                      <div>
+                        <h3>{album.placeName}</h3>
+                        <span>{album.circuitName}</span>
+                      </div>
+                      <div className="place-album-actions">
+                        <small>{album.memories.length} photos</small>
+                        <label className="place-memory-upload">
+                          <ImagePlus size={13} /> Add photos
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={(event) =>
+                              handleLocationPhotoUpload(
+                                event,
+                                album.circuitId,
+                                album.locationId
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                    {album.memories.length ? (
+                      <div className="photo-cards-row">
+                        {album.memories.map((memory) => (
+                          <div className="photo-card-compact" key={memory.id}>
+                            <img
+                              src={memory.url}
+                              alt={memory.caption}
+                              loading="lazy"
+                            />
+                            <button
+                              className="photo-remove-btn"
+                              onClick={() =>
+                                removeLocationPhoto(
+                                  album.circuitId,
+                                  album.locationId,
+                                  memory.id
+                                )
+                              }
+                              aria-label={`Remove ${memory.caption} from ${album.placeName}`}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                            <div className="photo-caption-bar">
+                              <span>{memory.caption}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="place-album-empty">
+                        No photos uploaded for this place yet.
+                      </p>
+                    )}
+                  </section>
+                ))
+              ) : (
+                <p className="place-album-empty">
+                  Your place albums will appear here after you mark a shrine visited.
+                </p>
+              )}
             </div>
-          </section>
+          </section>}
         </div>
       </main>
 
@@ -861,10 +1030,11 @@ export function App() {
                         alt={loc.name}
                         loading="lazy"
                         onError={(e) => {
-                          (e.target as HTMLImageElement).src =
-                            "https://images.unsplash.com/photo-1582510003544-4d00b7f74220?auto=format&fit=crop&w=400&q=80";
+                          (e.target as HTMLImageElement).style.visibility =
+                            "hidden";
                         }}
                       />
+                      <span className="loc-profile-label">Temple profile</span>
                       <span className="loc-index">#{idx + 1}</span>
                     </div>
 
@@ -889,6 +1059,63 @@ export function App() {
                           <Check size={12} /> Visited on {loc.visitedDate}
                         </div>
                       )}
+
+                      <div className="place-memory-gallery">
+                        <div className="place-memory-header">
+                          <span>Travel photos</span>
+                          <small>{(loc.memories || []).length}</small>
+                        </div>
+                        {loc.visited ? (
+                          <label className="place-memory-upload">
+                            <ImagePlus size={13} /> Add your photos
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              onChange={(event) =>
+                                handleLocationPhotoUpload(
+                                  event,
+                                  selectedCircuit.id,
+                                  loc.id
+                                )
+                              }
+                            />
+                          </label>
+                        ) : (
+                          <small className="place-memory-hint">
+                            Mark visited to add your travel photos
+                          </small>
+                        )}
+                        {(loc.memories || []).length ? (
+                          <div className="place-memory-grid">
+                            {(loc.memories || []).map((memory) => (
+                              <div className="place-memory-tile" key={memory.id}>
+                                <img src={memory.url} alt={memory.caption} loading="lazy" />
+                                <button
+                                  className="place-memory-remove"
+                                  onClick={() =>
+                                    removeLocationPhoto(
+                                      selectedCircuit.id,
+                                      loc.id,
+                                      memory.id
+                                    )
+                                  }
+                                  aria-label={`Remove ${memory.caption}`}
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                                <span className="place-memory-caption">
+                                  {memory.caption}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="place-memory-empty">
+                            No travel photos added yet.
+                          </p>
+                        )}
+                      </div>
 
                       <button
                         className={`btn-toggle-visited ${
@@ -924,6 +1151,25 @@ export function App() {
           </div>
         </div>
       )}
+
+      <div className="mobile-bottom-nav" aria-label="Mobile app navigation">
+        <a href="#home" className={`bottom-nav-item ${currentPage === "home" ? "active" : ""}`}>
+          <Compass size={16} />
+          <span>Home</span>
+        </a>
+        <a href="#track" className={`bottom-nav-item ${currentPage === "track" ? "active" : ""}`}>
+          <Target size={16} />
+          <span>Track</span>
+        </a>
+        <a href="#places" className={`bottom-nav-item ${currentPage === "places" ? "active" : ""}`}>
+          <Milestone size={16} />
+          <span>Places</span>
+        </a>
+        <a href="#memories" className={`bottom-nav-item ${currentPage === "memories" ? "active" : ""}`}>
+          <Camera size={16} />
+          <span>Memories</span>
+        </a>
+      </div>
 
       {loading && <div className="site-loading-bar" />}
     </div>
